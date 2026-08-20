@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "Ollama LLM Local Inference Benchmarking Suite"
+abstract: >-
+  A dependency-light Python toolkit for benchmarking locally-served large language models through
+  the Ollama daemon. Measures inference throughput and stability across a structured prompt suite,
+  and scores output correctness against GSM8K, HumanEval and TruthfulQA via EleutherAI's
+  lm-evaluation-harness, including a custom HumanEval task that works correctly against
+  chat-completions backends. Produces publication-ready LaTeX tables, heatmaps and bar charts.
+type: software
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/t3dr0/ollama_benchmark"
+authors:
+  - family-names: Curington
+    given-names: Ian
+    affiliation: "Thames 3D Research, United Kingdom"
+  - family-names: Lano
+    given-names: Kevin
+    affiliation: "King's College London, United Kingdom"
+keywords:
+  - large language models
+  - LLM inference
+  - benchmarking
+  - Ollama
+  - on-premises AI
+  - consumer GPU
+  - digital sovereignty
+  - e-waste
