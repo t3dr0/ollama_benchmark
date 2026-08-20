@@ -1,0 +1,7 @@
+include: ../Lib/site-packages/lm_eval/tasks/truthfulqa/truthfulqa_gen.yaml
+task: truthfulqa_gen_chat
+generation_kwargs:
+  until:
+    - "\n\nQ:"
+metadata:
+  version: 3.1

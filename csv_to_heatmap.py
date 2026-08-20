@@ -146,23 +146,194 @@ def generate_heatmap(df, meta, mode='tps', output_path=None):
         plt.show()
     plt.close()
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ollama CSV Execution Heatmap Plotter Engine.")
-    parser.add_argument("csv_file", help="Path to raw input benchmark CSV data file.")
-    parser.add_argument("--mode", choices=['tps', 'cov'], default='tps', help="Visual encoding mode: 'tps' (Inference Velocity) or 'cov' (Coefficient of Variation/Stability).")
-    parser.add_argument("--output", help="Optional explicit destination file path (e.g. output_heatmap.png).")
+# Original __main__ block replaced by _extended_main() below.
+
+# ==============================================================================
+# Bar Chart Extension  (added below original heatmap code)
+# ==============================================================================
+# generate_barchart()
+#
+# Produces a publication-quality grouped bar chart in SVG format.
+# Each bar represents one model; the Y-axis shows the grand mean of
+# Tokens_Per_Second aggregated across all prompt IDs.  Error bars show
+# ±1 standard deviation of the *per-prompt means* for that model,
+# capturing prompt-type variance rather than within-prompt run noise.
+#
+# Design constraints honoured:
+#   - Two colours only: black and a single accent (steel blue #2171B5).
+#   - All spines, gridlines, ticks, and annotations in black or grey.
+#   - Output: SVG vector format (infinitely scalable for print).
+# ==============================================================================
+
+def generate_barchart(df, meta, output_path=None):
+    """
+    Generates a two-colour publication bar chart: mean tokens/sec per model
+    with ±1 SD error bars. Exports in both SVG and EPS formats.
+    """
+    import numpy as np
+
+    # ------------------------------------------------------------------ data
+    tps = df[df['Metric_Type'] == 'Tokens_Per_Sec'].copy()
+    tps = tps[tps['Prompt_ID'].str.match(r'^P\d+(_T\d+)?$')]
+
+    agg = (tps.groupby(['Model', 'Size'])['Mean']
+              .agg(grand_mean='mean', cross_prompt_sd='std')
+              .reset_index())
+
+    agg = agg.sort_values('grand_mean', ascending=False).reset_index(drop=True)
+
+    # ----------------------------------------------------------- Label Logic
+    labels = []
+    for row in agg.itertuples():
+        if ':' in row.Model:
+            m_base, m_suffix = row.Model.split(':', 1)
+            labels.append(f"{m_base}\n{m_suffix} ({row.Size})")
+        else:
+            labels.append(f"{row.Model}\n({row.Size})")
+
+    # ----------------------------------------------------------- style constants
+    ACCENT   = '#2171B5'
+    BLACK    = '#000000'
+    GRIDGREY = '#CCCCCC'
+
+    n = len(agg)
+    x = np.arange(n)
+    bar_width = 0.55
+
+    # ------------------------------------------------------------- figure setup
+    # Aspect ratio: 12x6 (20% wider than 10x6)
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    bars = ax.bar(
+        x,
+        agg['grand_mean'],
+        width=bar_width,
+        color=ACCENT,
+        edgecolor=BLACK,
+        linewidth=0.8,
+        zorder=3,
+        label='Grand mean tokens/sec'
+    )
+
+    ax.errorbar(
+        x,
+        agg['grand_mean'],
+        yerr=agg['cross_prompt_sd'],
+        fmt='none',
+        ecolor=BLACK,
+        elinewidth=1.2,
+        capsize=5,
+        capthick=1.2,
+        zorder=4,
+        label='±1 SD (cross-prompt)'
+    )
+
+    # Annotations
+    for bar, mean_val, sd_val in zip(bars, agg['grand_mean'], agg['cross_prompt_sd']):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            mean_val + sd_val + (ax.get_ylim()[1] * 0.005),
+            f'{mean_val:.1f}',
+            ha='center', va='bottom',
+            fontsize=10, color=BLACK,
+            fontfamily='serif'
+        )
+
+    # ------------------------------------------------------------------ axes
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11, fontfamily='serif')
+    ax.set_ylabel('Mean Inference Throughput (tokens s\u207b\u00b9)',
+                  fontsize=13, fontfamily='serif', color=BLACK)
+    ax.set_xlabel('Model (parameter footprint)',
+                  fontsize=13, fontfamily='serif', color=BLACK)
+
+    ax.yaxis.grid(True, color=GRIDGREY, linewidth=0.6, zorder=0)
+    ax.set_axisbelow(True)
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color(BLACK)
+    ax.spines['bottom'].set_color(BLACK)
+    ax.tick_params(colors=BLACK)
+
+    ax.axhline(0, color=BLACK, linewidth=0.8)
+
+    # ------------------------------------------------------------------ title
+    title_str = (
+        f'On-Premises LLM Inference Throughput — Ollama Benchmark\n'
+        f'Host: {meta["hostname"]}  |  GPU: {meta["gpu_info"]}'
+    )
+    ax.set_title(title_str, fontsize=14, fontfamily='serif',
+                 fontweight='bold', color=BLACK, pad=14)
+
+    # ----------------------------------------------------------------- legend
+    ax.legend(frameon=False, fontsize=11, loc='upper right', bbox_to_anchor=(0.95, 1))
+
+    plt.tight_layout()
+
+    # ------------------------------------------------------------------ output
+    if output_path is None:
+        output_path = f"barchart_{meta['hostname']}.svg"
     
+    # Ensure file has .svg extension for the primary save
+    if not output_path.endswith('.svg'):
+        output_path += '.svg'
+
+    # Save SVG
+    plt.savefig(output_path, format='svg', bbox_inches='tight')
+    
+    # Save EPS
+    eps_path = output_path.replace('.svg', '.eps')
+    plt.savefig(eps_path, format='eps', bbox_inches='tight')
+    
+    print(f"[+] Bar charts exported to: {output_path} and {eps_path}")
+    plt.close()
+
+# ---------------------------------------------------------------- CLI wiring
+# Extend the existing argument parser to accept --barchart
+import sys as _sys
+
+def _extended_main():
+    import os
+    parser = argparse.ArgumentParser(
+        description="Ollama CSV Heatmap + Bar Chart Plotter.")
+    parser.add_argument("csv_file",
+        help="Path to raw input benchmark CSV data file.")
+    parser.add_argument("--mode", choices=['tps', 'cov'], default='tps',
+        help="Heatmap mode: 'tps' or 'cov'.")
+    parser.add_argument("--output",
+        help="Destination file path for heatmap output.")
+    parser.add_argument("--barchart", action='store_true',
+        help="Generate the bar chart (SVG) in addition to, or instead of, the heatmap.")
+    parser.add_argument("--barchart-only", action='store_true',
+        help="Generate only the bar chart; skip the heatmap.")
+    parser.add_argument("--barchart-output",
+        help="Destination file path for the bar chart SVG.")
+
     args = parser.parse_args()
-    
+
     if not os.path.exists(args.csv_file):
         print(f"[-] Input path error: File '{args.csv_file}' not found.")
-        sys.exit(1)
-        
+        _sys.exit(1)
+
     data_df, metadata = parse_csv_data(args.csv_file)
-    
-    # Auto-generate file name targets if none are explicitly declared
-    if not args.output:
-        stem, _ = os.path.splitext(args.csv_file)
-        args.output = f"{stem}_heatmap_{args.mode}.png"
-        
-    generate_heatmap(data_df, metadata, mode=args.mode, output_path=args.output)
+
+    # Bar chart
+    if args.barchart or args.barchart_only:
+        bc_out = args.barchart_output
+        if bc_out is None:
+            stem, _ = os.path.splitext(args.csv_file)
+            bc_out = f"{stem}_barchart.svg"
+        generate_barchart(data_df, metadata, output_path=bc_out)
+
+    # Heatmap (unless --barchart-only was given)
+    if not args.barchart_only:
+        hm_out = args.output
+        if hm_out is None:
+            stem, _ = os.path.splitext(args.csv_file)
+            hm_out = f"{stem}_heatmap_{args.mode}.png"
+        generate_heatmap(data_df, metadata, mode=args.mode, output_path=hm_out)
+
+
+if __name__ == "__main__":
+    _extended_main()

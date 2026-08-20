@@ -1,0 +1,45 @@
+import re
+
+import evaluate as hf_evaluate
+
+# Copied from lm_eval/tasks/humaneval/utils.py (lm_eval==0.4.12) so this task
+# has no runtime dependency on the installed package's internal file layout.
+compute_ = hf_evaluate.load("code_eval")
+compute_.compute(
+    references=["assert add(2, 3)==5"],
+    predictions=[["def add(a,b): return a*b"]],
+    k=[1],
+)
+
+
+def pass_at_k(references, predictions, k=None):
+    global compute_
+    assert k is not None
+    if isinstance(k, int):
+        k = [k]
+    return compute_.compute(references=references, predictions=predictions, k=k)[0]
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_FENCED_RE = re.compile(r"```(?:python)?[ \t]*\n(.*?)```", re.DOTALL)
+_DANGLING_FENCE_RE = re.compile(r"```(?:python)?[ \t]*\n(.*)", re.DOTALL)
+
+
+def extract_code(resp: str) -> str:
+    if not isinstance(resp, str):
+        return ""
+    text = _THINK_RE.sub("", resp)  # never mine code out of reasoning traces
+    complete = _FENCED_RE.findall(text)
+    if complete:
+        return complete[-1]  # prefer the LAST complete fenced block
+    dangling = _DANGLING_FENCE_RE.search(text)
+    if dangling:
+        return dangling.group(1)  # generation cut off before closing ```
+    return text  # no fence at all -> raw fallback
+
+
+def build_predictions_chat_regex(resps, docs):
+    return [
+        [doc["prompt"] + extract_code(r) for r in resp]
+        for resp, doc in zip(resps, docs)
+    ]
