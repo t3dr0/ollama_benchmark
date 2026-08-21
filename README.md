@@ -1,8 +1,14 @@
 # Ollama LLM Local Inference Benchmarking Suite
 
 A standalone, production-ready Python suite designed to execute local Large Language Model (LLM) performance audits via the official `ollama` daemon API.
- This script runs an automated matrix of **10 distinct prompt dimensions** across a specified array of open-weights models,
- collecting raw token processing metrics directly from the inference engine to eliminate external IPC/network overhead.
+ It measures two things that are easy to confuse and often move independently: **how fast** a model responds, and **whether
+ the response is correct**.
+
+ The throughput benchmark runs an automated matrix of **10 distinct prompt dimensions** across a specified array of
+ open-weights models, collecting raw token processing metrics directly from the inference engine to eliminate external
+ IPC/network overhead. The correctness benchmark scores the same models against **three public benchmarks with gold
+ answers** (GSM8K, HumanEval and TruthfulQA) via EleutherAI's lm-evaluation-harness. See
+ [`correctness/`](correctness/).
 
 ---
 
@@ -12,7 +18,9 @@ A standalone, production-ready Python suite designed to execute local Large Lang
 This tool is essentially a "speedometer" and stress-tester for Artificial Intelligence models running locally on your own computer.
  Instead of sending text over the internet to services like OpenAI's ChatGPT, many users run open-source AI models (like Meta's Llama or DeepSeek)
  entirely on their own hardware using a background program called **Ollama**.
- This Python script puts those local models through a rigorous battery of tests to see exactly how fast they process information and generate answers.
+ This suite puts those local models through a rigorous battery of tests to see exactly how fast they process information
+ and generate answers, and then a second battery to check whether the answers are actually right. A fast wrong answer is
+ worth nothing, and speed turns out to be a poor predictor of accuracy, so both are measured.
 
 ### Supported Environments & Hardware
 To ensure maximum portability, the suite automatically detects, adapts to, and audits performance across a massive range of computing setups:
@@ -26,7 +34,11 @@ A model might run lightning-fast when answering a short trivia question, but slo
 
 This benchmarking suite was created to provide a **scientific, standardized way to measure AI performance**.
  Rather than relying on guesswork ("it feels fast today"), this script runs every model through 10 distinct types of real-world tasks,
- repeats each test 5 times, and calculates exact, reliable speeds. It also includes automatic safeguards
+ repeats each test 5 times, and calculates exact, reliable speeds.
+
+Speed alone is not enough to choose a model, however. A model can be quick, stable, and consistently wrong. The correctness
+ benchmark therefore scores the same models on arithmetic reasoning, code that must actually execute and pass its unit tests,
+ and resistance to plausible-but-false answers, so that the two axes can be weighed together. It also includes automatic safeguards
  to dynamically catch and repair common network routing traps (like the `0.0.0.0` client deadlock) that often frustrate users setting up local AI servers.
 
 ### Who is it for?
@@ -41,7 +53,10 @@ by I. Curington and K. Lano (2026).
 
 
 ### Elapsed Time Warning
-This benchmark test can take approximately **FIVE to SIX HOURS** on an RTX 3060 GPU - you have been warned!
+Neither benchmark is quick. The throughput benchmark takes approximately **five to six hours** on an RTX 3060.
+The correctness benchmark is considerably longer, since it runs roughly 2,300 items per model rather than sixty:
+budget **one to four hours per model per benchmark**, depending on the model's size and whether it reasons by default.
+Models that exceed available VRAM and spill to CPU are slower again. Run both unattended.
 
 ---
 
@@ -64,13 +79,18 @@ This benchmarking suite requires Ollama to be installed and running locally as a
 
 * **Ollama Engine:** v0.3.0+ recommended (v0.1.48 minimum required for API compatibility).
 * **Download:** [https://ollama.com/download](https://ollama.com/download)
+* **Version caveat:** `gpt-oss:20b` fails to serve under Ollama v0.32.3 with a tensor-size error affecting its MXFP4
+  mixture-of-experts layout. This is fixed by v0.32.6. If you intend to benchmark that model, use v0.32.6 or later.
+* **For the correctness benchmark only:** EleutherAI's lm-evaluation-harness, installed with the API extra:
+  `pip install "lm-eval[api]"`. The base install omits `tenacity`, which the API-backed model classes require.
 
 Ensure the Ollama server is running natively (`ollama serve`) and that your target models are pulled before running the benchmark driver.
 
 ### Supported Benchmark Model Matrix
 
-The benchmark script targets the following open-weights models.
-Ensure the Ollama server is running natively (`ollama serve`) and that your target models are pulled before running the benchmark driver.
+Both benchmarks target the same eight open-weights models, so the throughput and correctness results are directly
+comparable model by model. Ensure the Ollama server is running natively (`ollama serve`) and that your target models are
+pulled before running either driver.
 
 ```bash
 ollama pull gemma4:e4b
@@ -82,6 +102,18 @@ ollama pull deepseek-r1:1.5b
 ollama pull mistral-nemo:12b
 ollama pull gpt-oss:20b
 ```
+
+A ninth tag is used only as a control. `mistral-nemo:12b` is the one model whose default tag serves `Q4_0` rather than
+`Q4_K_M`, so it is additionally evaluated at matched quantisation to confirm that the difference is attributable to the
+model rather than to the quantisation its default tag happens to supply:
+
+```bash
+ollama pull mistral-nemo:12b-instruct-2407-q4_K_M
+```
+
+> **Worth knowing:** Ollama's default tag does not guarantee a consistent quantisation across models, and the choice is
+ not surfaced during a normal pull. Practitioners comparing models on default tags may unknowingly be comparing
+ different quantisations.
 
 > **Note:** The suite contains an integrated system discovery check.
  If models are missing, the script will isolate them gracefully,
@@ -120,6 +152,46 @@ OLLAMA_HOST=127.0.0.1:11434 python ollama_benchmark.py
 $env:OLLAMA_HOST="127.0.0.1:11434"; python ollama_benchmark.py
 
 ```
+
+### Running the Correctness Benchmark
+
+The correctness axis is driven by lm-evaluation-harness rather than by this repository's own script. Install it, then
+point it at the custom task definitions in [`correctness/tasks/`](correctness/tasks/):
+
+```bash
+pip install "lm-eval[api]"
+mkdir -p local_results
+
+# GSM8K
+lm_eval run --model local-chat-completions \
+  --model_args model=gemma4:e4b,base_url=http://localhost:11434/v1/chat/completions,num_concurrent=1,tokenized_requests=False \
+  --tasks gsm8k --apply_chat_template --log_samples \
+  --gen_kwargs max_tokens=16384 --output_path local_results/
+
+# HumanEval, using the chat-aware task in correctness/tasks/
+HF_ALLOW_CODE_EVAL=1 lm_eval run --model local-chat-completions \
+  --model_args model=gemma4:e4b,base_url=http://localhost:11434/v1/chat/completions,num_concurrent=1,tokenized_requests=False \
+  --tasks humaneval_local_chat --include_path correctness/tasks \
+  --apply_chat_template --log_samples --confirm_run_unsafe_code \
+  --gen_kwargs max_tokens=16384 --output_path local_results/
+```
+
+Three things matter here and are easy to get wrong:
+
+* **Use a generous `max_tokens`.** Reasoning models return their chain of thought in a separate response field, and the
+  harness reads only the answer field. A model that exhausts its budget while reasoning is recorded as returning an empty
+  answer, indistinguishable from a wrong one. 4096 is not sufficient for HumanEval.
+* **HumanEval executes model-generated code**, so it needs `HF_ALLOW_CODE_EVAL=1` and `--confirm_run_unsafe_code`. Run it
+  from a scratch directory.
+* **Pick the right TruthfulQA variant:** `truthfulqa_gen_chat` for reasoning-capable models, `truthfulqa_gen` for the rest.
+  Applying the wrong one to a reasoning model returns a large fraction of empty responses.
+
+Output is written to `local_results/` rather than `results/`, which in this repository holds only a pointer to the
+deposited datasets. Add `local_results/` to your `.gitignore` if you intend to commit from a working clone.
+
+Ready-made sweep scripts covering all models and benchmarks are in
+[`correctness/scripts/`](correctness/scripts/). Expect the correctness sweep to take considerably longer than the
+throughput benchmark: it is thousands of items per model rather than sixty.
 
 ---
 

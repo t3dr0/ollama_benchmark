@@ -1,0 +1,24 @@
+# Benchmark output. Results are deposited on Zenodo and cited by DOI, not committed here;
+# see results/README.md. The README's worked examples write to local_results/.
+local_results/
+*_summary.tex
+*_full.tex
+*_heatmap_*.png
+*_barchart.*
+ollama_benchmark_results*.csv
+
+# lm-evaluation-harness writes these when it loads the custom task in
+# correctness/tasks/humaneval_local_chat/
+__pycache__/
+*.py[cod]
+
+# Environments
+.venv/
+venv/
+env/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
